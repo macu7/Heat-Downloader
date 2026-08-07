@@ -121,6 +121,21 @@ py .\heat_downloader.py probe-status --not-probed
 
 The [Release workflow](.github/workflows/release.yml) builds the Windows zip, uploads to VirusTotal when the secret is set, and attaches the files to the Release.
 
+Release builds disable UPX and rebuild PyInstaller’s Windows bootloader from source to reduce antivirus false positives. You can reproduce a local build with `powershell -File .\build.ps1`.
+
+
+## Antivirus false positives
+
+Unsigned PyInstaller one-file EXEs are often flagged by heuristic/ML engines (for example Microsoft `Trojan:Win32/Wacatac.B!ml`, Elastic, Bkav, SecureAge) even when the program is clean. That is a tooling fingerprint issue, not evidence of malware in this repo.
+
+If Windows Defender quarantines the release binary:
+
+1. Prefer running from source: `py .\heat_downloader.py`
+2. Or allow/restore the file after checking the public source and VirusTotal report linked on the GitHub Release
+3. Report the EXE as a false positive to vendors (especially [Microsoft](https://www.microsoft.com/en-us/wdsi/filesubmission)) so definitions can be corrected
+
+A code-signing certificate would improve reputation further; this project does not currently sign releases.
+
 
 ## Notes
 

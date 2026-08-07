@@ -26,6 +26,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller
 
+      - name: Rebuild PyInstaller bootloader
+        shell: pwsh
+        run: .\scripts\rebuild_pyinstaller_bootloader.ps1
+
       - name: Prepare probes file
         shell: pwsh
         run: |
@@ -119,3 +123,5 @@ jobs:
 
             ### VirusTotal
             ${{ steps.vt_links.outputs.markdown }}
+
+            > Heuristic false positives (for example Microsoft `Wacatac*!ml`) are common on unsigned PyInstaller EXEs. The project source is public; prefer the zip from this release or run from source with Python.

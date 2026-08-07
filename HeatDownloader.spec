@@ -1,9 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec for HeatDownloader one-file Windows build.
 
-from PyInstaller.utils.hooks import collect_all
+from __future__ import annotations
 
+import re
 from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
@@ -22,6 +25,56 @@ for pkg in ("curl_cffi", "certifi", "bs4", "soupsieve"):
 seed_path = Path("heat_probes.json")
 if seed_path.exists():
     datas.append((str(seed_path.resolve()), "."))
+
+# Embed Windows VERSIONINFO so the binary looks like a normal app, not a packer stub.
+_version_match = re.search(
+    r'__version__\s*=\s*"([^"]+)"',
+    Path("heat_downloader/__init__.py").read_text(encoding="utf-8"),
+)
+_app_version = _version_match.group(1) if _version_match else "0.0.0"
+_parts = [int(p) for p in _app_version.split(".") if p.isdigit()]
+while len(_parts) < 4:
+    _parts.append(0)
+_filevers = tuple(_parts[:4])
+_version_info = Path("build") / "file_version_info.txt"
+_version_info.parent.mkdir(parents=True, exist_ok=True)
+_version_info.write_text(
+    f"""# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={_filevers!r},
+    prodvers={_filevers!r},
+    mask=0x3F,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0),
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          '040904B0',
+          [
+            StringStruct('CompanyName', 'macu7'),
+            StringStruct('FileDescription', 'Heat Downloader'),
+            StringStruct('FileVersion', {_app_version!r}),
+            StringStruct('InternalName', 'HeatDownloader'),
+            StringStruct('LegalCopyright', 'Copyright (c) macu7'),
+            StringStruct('OriginalFilename', 'HeatDownloader.exe'),
+            StringStruct('ProductName', 'Heat Downloader'),
+            StringStruct('ProductVersion', {_app_version!r}),
+          ],
+        )
+      ]
+    ),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])]),
+  ],
+)
+""",
+    encoding="utf-8",
+)
 
 a = Analysis(
     ["heat_downloader.py"],
@@ -59,7 +112,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX packing is a common AV false-positive trigger; keep the binary unpacked.
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=True,
@@ -68,4 +122,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    version=str(_version_info),
 )

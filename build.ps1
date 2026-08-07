@@ -11,6 +11,9 @@ if (-not (Test-Path "heat_probes.json")) {
     throw "heat_probes.json is required for the release package"
 }
 
+Write-Host "Rebuilding PyInstaller bootloader (reduces AV false positives)..."
+& (Join-Path $PSScriptRoot "scripts\rebuild_pyinstaller_bootloader.ps1")
+
 Write-Host "Building HeatDownloader.exe..."
 py -m PyInstaller --noconfirm --clean HeatDownloader.spec
 
