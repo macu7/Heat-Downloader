@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Prepare probes file
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "heat_probes.json")) {
+            throw "heat_probes.json missing from repository"
+          }
+
+      - name: Build executable
+        run: python -m PyInstaller --noconfirm --clean HeatDownloader.spec
+
+      - name: Package release zip
+        shell: pwsh
+        run: |
+          Copy-Item -Force heat_probes.json dist/heat_probes.json
+          if (Test-Path dist/HeatDownloader-windows.zip) { Remove-Item dist/HeatDownloader-windows.zip -Force }
+          Compress-Archive -Path dist/HeatDownloader.exe,dist/heat_probes.json -DestinationPath dist/HeatDownloader-windows.zip
+
+      - name: Smoke test
+        run: |
+          .\dist\HeatDownloader.exe --help
+          .\dist\HeatDownloader.exe probe-status
+
+      - name: VirusTotal scan
+        id: virustotal
+        uses: crazy-max/ghaction-virustotal@v5
+        continue-on-error: true
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          files: |
+            dist/HeatDownloader.exe
+            dist/HeatDownloader-windows.zip
+          request_rate: 4
+
+      - name: Format VirusTotal links
+        id: vt_links
+        shell: pwsh
+        run: |
+          $outcome = "${{ steps.virustotal.outcome }}"
+          $analysis = "${{ steps.virustotal.outputs.analysis }}"
+          $lines = @()
+
+          if ($outcome -eq "success" -and -not [string]::IsNullOrWhiteSpace($analysis)) {
+            foreach ($pair in $analysis.Split(',')) {
+              $idx = $pair.IndexOf('=')
+              if ($idx -lt 1) { continue }
+              $file = Split-Path -Leaf $pair.Substring(0, $idx).Trim()
+              $url = $pair.Substring($idx + 1).Trim()
+              if ($file -and $url) {
+                $lines += "- ``$file``: [VirusTotal report]($url)"
+              }
+            }
+          }
+
+          if ($lines.Count -gt 0) {
+            $markdown = ($lines -join "`n")
+          } else {
+            $markdown = "VirusTotal scan skipped or failed (set repository secret ``VT_API_KEY`` to enable automatic uploads)."
+          }
+
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "markdown<<EOF"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value $markdown
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "EOF"
+
+          Write-Host "VirusTotal section:`n$markdown"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: HeatDownloader-windows
+          path: |
+            dist/HeatDownloader.exe
+            dist/heat_probes.json
+            dist/HeatDownloader-windows.zip
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/HeatDownloader.exe
+            dist/heat_probes.json
+            dist/HeatDownloader-windows.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            ## Heat Downloader ${{ github.ref_name }}
+
+            Download **HeatDownloader-windows.zip** (recommended) — includes:
+            - `HeatDownloader.exe`
+            - `heat_probes.json` (probe cache)
+
+            ### VirusTotal
+            ${{ steps.vt_links.outputs.markdown }}

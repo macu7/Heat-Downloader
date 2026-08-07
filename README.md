@@ -32,13 +32,12 @@ Start the interactive menu:
 py .\heat_downloader.py
 ```
 
-Choose:
+The interactive menu stays open until you quit (`q`).
 
-- `1` to download the newest available build.
-- `2` to download a specific version.
-- `3` to list recent releases.
-- `4` to check the newest available archive without downloading it.
-- `5` to set the default download folder.
+- `1` List recent releases (optionally probe one by number, then download).
+- `2` Probe latest archive, then ask whether to download/extract.
+- `3` Probe a specific version, then ask whether to download/extract.
+- `4` Advanced: output dir, catalog probe → JSON, saved probes, force re-download, paths.
 
 ## Command-line usage
 
@@ -104,11 +103,24 @@ The archive date can be checked before downloading.
 
 For the current `1.7.0 Test` example, the archive server reports `2026-07-18 16:48:13 UTC`, matching the July 18 release post and the files in the extracted build.
 
-## Please support Anthro Heat
+## Probe cache
 
-Heat Downloader is an archive checker and loader for files you are authorized to access. It is not designed as a tool for piracy and should not replace buying the game.
+Successful probes are saved to `heat_probes.json` (next to the script/exe) and reused on later runs. Misses go into `not_found`. The file is kept compact (`version`/`url`/`kind`/`last_modified`/`size_bytes`) and is included in release zips.
 
-If you enjoy Anthro Heat, please [buy it on Steam](https://store.steampowered.com/app/2236060/Anthro_Heat/) and, if you have a good time with it, consider leaving the developers a positive review. It is a small gesture that helps the team continue making and improving the game.
+```powershell
+py .\heat_downloader.py probe-all --only-new
+py .\heat_downloader.py probe-all --verify-old
+py .\heat_downloader.py probe-all --verify-old --all
+py .\heat_downloader.py probe-status
+py .\heat_downloader.py probe-status --not-found
+py .\heat_downloader.py probe-status --not-probed
+```
+
+`probe-all` shows a progress bar with ETA.
+
+
+The [Release workflow](.github/workflows/release.yml) builds the Windows zip, uploads to VirusTotal when the secret is set, and attaches the files to the Release.
+
 
 ## Notes
 
@@ -117,3 +129,10 @@ If you enjoy Anthro Heat, please [buy it on Steam](https://store.steampowered.co
 - Downloads are large; check the printed archive size before starting one.
 - If extraction is skipped, install 7-Zip or extract the downloaded archive manually.
 - You may need VPN to get access to patreon/anthroheat.net
+
+
+## Please support Anthro Heat
+
+Heat Downloader is an archive checker and loader for files you are authorized to access. It is not designed as a tool for piracy and should not replace buying the game.
+
+If you enjoy Anthro Heat, please [buy it on Steam](https://store.steampowered.com/app/2236060/Anthro_Heat/) and, if you have a good time with it, consider leaving the developers a positive review. It is a small gesture that helps the team continue making and improving the game.
