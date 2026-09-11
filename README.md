@@ -32,9 +32,9 @@ Start the interactive menu:
 py .\heat_downloader.py
 ```
 
-The interactive menu stays open until you quit (`q`).
+The interactive menu stays open until you quit (`q`). The main menu also shows the last downloaded version (from config or archives in the output folder).
 
-- `1` List recent releases (optionally probe one by number, then download).
+- `1` List recent releases (shows whether each version already has a successful probe).
 - `2` Probe latest archive, then ask whether to download/extract.
 - `3` Probe a specific version, then ask whether to download/extract.
 - `4` Advanced: output dir, catalog probe → JSON, saved probes, force re-download, paths.

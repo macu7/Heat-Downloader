@@ -28,6 +28,15 @@ def _version_key(version: str) -> tuple[int, ...] | None:
     return tuple(int(part) for part in parts)
 
 
+def version_sort_key(version: str) -> tuple:
+    """Sort key for Heat versions: numeric newest/oldest, then raw string."""
+    key = _version_key(normalize_version(version))
+    if key is None:
+        return (0, (0, 0, 0, 0), version)
+    padded = key + (0,) * (4 - len(key))
+    return (1, padded, version)
+
+
 def _version_distance(left: str, right: str) -> int:
     """A simple numeric distance used only to choose fallback prefixes."""
     left_key = _version_key(left)

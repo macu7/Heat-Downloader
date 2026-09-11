@@ -22,6 +22,7 @@ from heat_downloader.models import (
     detect_kind,
     extract_raw_version,
     extract_version,
+    version_sort_key,
 )
 
 ARTIFACT_CACHE_PATH = Path.home() / ".heat_downloader_artifacts.json"
@@ -593,8 +594,8 @@ def load_probe_store(path: Path | None = None) -> ProbeStore:
         raw_probes = payload.get("probes") or payload.get("artifacts") or []
         raw_not_found = payload.get("not_found") or []
 
-    probes = dedupe_probes(
-        item for item in (_parse_found_item(x) for x in raw_probes) if item
+    probes = _sorted_probes(
+        dedupe_probes(item for item in (_parse_found_item(x) for x in raw_probes) if item)
     )
     not_found = [
         item for item in (_parse_not_found_item(x) for x in raw_not_found) if item
@@ -604,23 +605,37 @@ def load_probe_store(path: Path | None = None) -> ProbeStore:
     not_found = [item for item in not_found if item.version not in found_versions]
     # Dedupe not_found by version.
     not_found_by = {item.version: item for item in not_found}
-    return ProbeStore(probes=probes, not_found=list(not_found_by.values()))
+    return ProbeStore(
+        probes=probes,
+        not_found=_sorted_not_found(not_found_by.values()),
+    )
 
 
 def load_artifact_cache(path: Path | None = None) -> list[FoundArtifact]:
     return load_probe_store(path).probes
 
 
-def save_probe_store(store: ProbeStore, path: Path) -> Path:
-    probes = sorted(dedupe_probes(store.probes), key=lambda item: item.sort_key(), reverse=True)
-    found_versions = {item.version for item in probes}
-    not_found_versions = sorted(
-        {
-            item.version
-            for item in store.not_found
-            if item.version not in found_versions
-        }
+def _sorted_probes(probes: Iterable[FoundArtifact]) -> list[FoundArtifact]:
+    return sorted(
+        probes,
+        key=lambda item: (item.sort_key(), version_sort_key(item.version)),
+        reverse=True,
     )
+
+
+def _sorted_not_found(items: Iterable[NotFoundProbe]) -> list[NotFoundProbe]:
+    return sorted(items, key=lambda item: version_sort_key(item.version))
+
+
+def save_probe_store(store: ProbeStore, path: Path) -> Path:
+    probes = _sorted_probes(dedupe_probes(store.probes))
+    found_versions = {item.version for item in probes}
+    not_found_versions = [
+        item.version
+        for item in _sorted_not_found(
+            item for item in store.not_found if item.version not in found_versions
+        )
+    ]
     payload = {
         "probes": [item.to_json() for item in probes],
         "not_found": not_found_versions,

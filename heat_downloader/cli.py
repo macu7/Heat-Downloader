@@ -28,10 +28,13 @@ from heat_downloader.models import (
     Release,
     archive_version_candidates,
     extract_raw_version,
+    extract_version,
     format_date,
     format_datetime,
     format_source_tag,
     merge_releases,
+    normalize_version,
+    version_sort_key,
 )
 from heat_downloader.patreon import PATREON_PAGE, fetch_patreon_releases
 from heat_downloader.steamdb import fetch_steamdb_releases
@@ -168,13 +171,33 @@ def print_checking(release: Release) -> None:
     )
 
 
-def format_release_list_line(index: int, release: Release) -> str:
+def successful_probe_versions() -> set[str]:
+    return {item.version for item in load_probe_store().probes}
+
+
+def release_has_successful_probe(release: Release, found_versions: set[str]) -> bool:
+    candidates = {release.version, normalize_version(release.version)}
+    raw = extract_raw_version(release.title)
+    if raw:
+        candidates.add(raw)
+        candidates.add(normalize_version(raw))
+    candidates.update(archive_version_candidates(raw or release.version))
+    return any(version in found_versions for version in candidates)
+
+
+def format_release_list_line(
+    index: int,
+    release: Release,
+    *,
+    probed: bool = False,
+) -> str:
     date_part = f"[{format_date(release)}]" if release.date else "[unknown date]"
     source_part = format_source_tag(release.source)
     kind_part = release.kind if release.kind != "Unknown" else ""
+    probe_part = f"{GREEN}probed{RESET}" if probed else f"{DIM}no probe{RESET}"
     meta = " ".join(part for part in (date_part, source_part, kind_part) if part)
     return (
-        f"  {DIM}{index:>3}.{RESET} {BOLD}{release.version}{RESET}\n"
+        f"  {DIM}{index:>3}.{RESET} {BOLD}{release.version}{RESET}  {probe_part}\n"
         f"       {DIM}{meta}{RESET}\n"
         f"       {release.title}"
     )
@@ -227,14 +250,70 @@ def resolve_output_dir(cfg: dict, *, ask_confirm: bool = True) -> Path | None:
     return path
 
 
-def maybe_download_and_extract(url: str, cfg: dict, *, force: bool = False) -> None:
+def remember_download(cfg: dict, url: str, path: Path, version: str | None = None) -> None:
+    detected = version or extract_version(path.name) or extract_version(url)
+    if detected:
+        cfg["last_downloaded_version"] = detected
+    cfg["last_downloaded_file"] = str(path)
+    save_config(cfg)
+
+
+def downloaded_builds_in_dir(output_dir: str | Path) -> list[tuple[str, Path]]:
+    folder = Path(output_dir)
+    if not folder.is_dir():
+        return []
+    try:
+        entries = list(folder.iterdir())
+    except OSError:
+        return []
+
+    found: list[tuple[str, Path]] = []
+    archive_suffixes = {".7z", ".zip", ".rar"}
+    for entry in entries:
+        if entry.is_file() and entry.suffix.lower() not in archive_suffixes:
+            continue
+        version = extract_version(entry.name)
+        if version:
+            found.append((version, entry))
+    return found
+
+
+def last_downloaded_version(cfg: dict) -> str | None:
+    recorded = str(cfg.get("last_downloaded_version") or "").strip() or None
+    output_dir = cfg.get("output_dir") or os.getcwd()
+    found = downloaded_builds_in_dir(output_dir)
+    if found:
+        found.sort(
+            key=lambda item: (
+                version_sort_key(item[0]),
+                item[1].stat().st_mtime if item[1].exists() else 0,
+            ),
+            reverse=True,
+        )
+        scanned = found[0][0]
+        if recorded:
+            return recorded if version_sort_key(recorded) >= version_sort_key(scanned) else scanned
+        return scanned
+    return recorded
+
+
+def maybe_download_and_extract(
+    url: str,
+    cfg: dict,
+    *,
+    force: bool = False,
+    version: str | None = None,
+) -> None:
     if not ask_yes("Download this archive?", default_yes=True):
         return
     dest = resolve_output_dir(cfg, ask_confirm=True)
     if dest is None:
         return
     path = download(url, dest, force=force, log=LOG)
-    if path and ask_yes("Extract with 7-Zip?", default_yes=True):
+    if not path:
+        return
+    remember_download(cfg, url, path, version)
+    if ask_yes("Extract with 7-Zip?", default_yes=True):
         extract(path, log=LOG)
 
 
@@ -345,7 +424,9 @@ def print_status(cfg: dict) -> None:
     out = cfg.get("output_dir") or os.getcwd()
     probes = load_artifact_cache(probes_json_path())
     cached = len(_RELEASES_CACHE) if _RELEASES_CACHE is not None else 0
+    last = last_downloaded_version(cfg) or "none yet"
     print(f"  {DIM}output : {out}{RESET}")
+    print(f"  {DIM}last   : {last}{RESET}")
     print(f"  {DIM}probes : {len(probes)} saved  |  catalog cache: {cached or 'empty'}{RESET}")
 
 
@@ -373,8 +454,15 @@ def action_list_releases(cfg: dict) -> None:
         LOG.warn("no releases found")
         return
 
+    found_versions = successful_probe_versions()
     for index, release in enumerate(releases, 1):
-        print(format_release_list_line(index, release))
+        print(
+            format_release_list_line(
+                index,
+                release,
+                probed=release_has_successful_probe(release, found_versions),
+            )
+        )
         print()
 
     pick = ask("probe # from list (Enter to skip)", "")
@@ -402,7 +490,7 @@ def action_list_releases(cfg: dict) -> None:
         LOG.err(f"no artifact found for {release.version}")
         return
     LOG.ok(f"{release.version}  ->  {url}")
-    maybe_download_and_extract(url, cfg)
+    maybe_download_and_extract(url, cfg, version=release.version)
 
 
 def action_probe_latest(cfg: dict) -> None:
@@ -410,7 +498,7 @@ def action_probe_latest(cfg: dict) -> None:
     if not url or not release:
         return
     LOG.ok(f"latest: {release.version} {format_source_tag(release.source)}  ->  {url}")
-    maybe_download_and_extract(url, cfg)
+    maybe_download_and_extract(url, cfg, version=release.version)
 
 
 def action_probe_specific(cfg: dict) -> None:
@@ -436,7 +524,7 @@ def action_probe_specific(cfg: dict) -> None:
         LOG.err(f"no artifact found for {version}")
         return
     LOG.ok(f"{version}  ->  {url}")
-    maybe_download_and_extract(url, cfg)
+    maybe_download_and_extract(url, cfg, version=release.version if release else version)
 
 
 def action_show_saved_probes() -> None:
@@ -522,6 +610,7 @@ def action_advanced(cfg: dict) -> None:
             print(f"  config      : {CONFIG_PATH}")
             print(f"  probes      : {probes_json_path()}")
             print(f"  output dir  : {cfg.get('output_dir') or os.getcwd()}")
+            print(f"  last down.  : {last_downloaded_version(cfg) or 'none yet'}")
             print(f"  version     : {__version__}")
 
         elif choice == "7":
@@ -541,8 +630,10 @@ def action_advanced(cfg: dict) -> None:
                 if dest is None:
                     continue
                 path = download(url, dest, force=True, log=LOG)
-                if path and ask_yes("Extract with 7-Zip?", default_yes=True):
-                    extract(path, log=LOG)
+                if path:
+                    remember_download(cfg, url, path, version)
+                    if ask_yes("Extract with 7-Zip?", default_yes=True):
+                        extract(path, log=LOG)
         else:
             LOG.warn("invalid choice")
 
@@ -700,17 +791,31 @@ def main() -> None:
             if not url:
                 return
         path = download(url, dest, force=args.force, log=LOG)
-        if path and args.extract:
-            extract(path, log=LOG)
+        if path:
+            remember_download(
+                cfg,
+                url,
+                path,
+                args.version or extract_version(path.name),
+            )
+            if args.extract:
+                extract(path, log=LOG)
 
     elif args.cmd in ("list", "l"):
         count = args.n[0] if isinstance(args.n, list) and args.n else (
             args.n if isinstance(args.n, int) else 10
         )
+        found_versions = successful_probe_versions()
         for index, release in enumerate(
             islice(get_releases(include_steamdb=include_steamdb), count), 1
         ):
-            print(format_release_list_line(index, release))
+            print(
+                format_release_list_line(
+                    index,
+                    release,
+                    probed=release_has_successful_probe(release, found_versions),
+                )
+            )
             print()
 
     elif args.cmd in ("probe", "p"):
